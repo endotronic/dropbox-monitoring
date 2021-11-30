@@ -48,6 +48,7 @@ class DropboxInterface:
                 self.logger.warning("Dropbox status did not produce results")
                 return None
             else:
+                self.logger.debug("Got result from Dropbox: %s", result.stdout)
                 return result.stdout
         except:
             self.logger.exception("Failed to invoke Dropbox")
@@ -68,6 +69,9 @@ class DropboxMonitor:
         self.prom_port = prom_port
         self.status_matcher = re.compile(
             "(Syncing|Downloading|Uploading|Indexing) (\\d+) files"
+        )
+        self.status_matcher_with_file = re.compile(
+            '(Syncing|Downloading|Uploading|Indexing) ".+"'
         )
 
         self.last_query_time = 0
@@ -146,6 +150,7 @@ class DropboxMonitor:
         Indexing 1 file...
         Can't sync "monitoring.txt" (access denied)
         Syncing "none" • 1 sec
+        Downloading 82 files (2,457 KB/sec, 2 secs)
         """
         state = State.UNKNOWN
         num_syncing = None  # type: Optional[int]
@@ -154,7 +159,7 @@ class DropboxMonitor:
 
         for line in results.splitlines():
             try:
-                if line == "Up to date":
+                if line.startswith("Up to date"):
                     state = State.UP_TO_DATE
                     self.num_syncing = 0
                     self.num_downloading = 0
@@ -163,16 +168,28 @@ class DropboxMonitor:
                     state = State.NOT_RUNNING
                 else:
                     status_match = self.status_matcher.match(line)
+                    status_match_with_file = self.status_matcher_with_file.match(line)
                     if status_match:
                         state = State.SYNCING
                         action, num_files_str = status_match.groups()
                         num_files = int(num_files_str)
                         if action == "Syncing":
-                            self.num_syncing = num_files
+                            num_syncing = num_files
                         if action == "Downloading":
-                            self.num_downloading = num_files
+                            num_downloading = num_files
                         if action == "Uploading":
-                            self.num_uploading = num_files
+                            num_uploading = num_files
+                    elif status_match_with_file:
+                        state = State.SYNCING
+                        action = status_match_with_file.groups()[0]
+                        if action == "Syncing":
+                            num_syncing = 1
+                        if action == "Downloading":
+                            num_downloading = 1
+                        if action == "Uploading":
+                            num_uploading = 1
+                    elif line.startswith("Starting"):
+                        state = State.STARTING
                     elif line.startswith("Syncing"):
                         state = State.SYNCING
                     elif line.startswith("Indexing"):
@@ -206,7 +223,7 @@ if __name__ == "__main__":
         default=5,
     )
     parser.add_argument("-p", "--port", help="Prometheus port", default=8000)
-    parser.add_argument("--log_level", default="DEBUG")
+    parser.add_argument("--log_level", default="INFO")
     parser.add_argument("--global_log_level", default="INFO")
     args = parser.parse_args()
 
