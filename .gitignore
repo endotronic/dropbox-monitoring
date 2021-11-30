@@ -1,4 +1,4 @@
 .mypy_cache
 .venv
 config.yaml
-http_cache.sqlite
+__pycache__
